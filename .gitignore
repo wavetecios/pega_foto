@@ -1,0 +1,4 @@
+fotos_prontas/
+__pycache__/
+*.pyc
+config.json
