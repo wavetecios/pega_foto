@@ -182,6 +182,7 @@ class TotemApp:
     self.fotos_sessao = []
     self.resultados_captura = queue.Queue()
     self.moldura_atual_pil = None
+    self.moldura_liveview_pil = None
     self.moldura_atual_path = None
     self._moldura_tk_cache = None
     self._moldura_tamanho_cache = None
@@ -335,6 +336,7 @@ class TotemApp:
 
   def recarregar_moldura_ativa(self):
     self.moldura_atual_pil = None
+    self.moldura_liveview_pil = None
     self.moldura_atual_path = None
     self._moldura_tk_cache = None
     self._moldura_tamanho_cache = None
@@ -356,6 +358,25 @@ class TotemApp:
     with Image.open(caminho) as arquivo:
       self.moldura_atual_pil = self.normalizar_moldura(arquivo)
     self.moldura_atual_path = caminho
+    if self.modo_tira:
+      nome_moldura_liveview = self.config.get("moldura_1foto")
+      if not nome_moldura_liveview:
+        raise ValueError("A configuração não define a moldura de 1 Foto.")
+      if nome_moldura_liveview == nome_moldura:
+        self.moldura_liveview_pil = self.moldura_atual_pil
+      else:
+        caminho_liveview = os.path.join(
+            PASTA_MOLDURAS, nome_moldura_liveview
+        )
+        if not os.path.isfile(caminho_liveview):
+          raise FileNotFoundError(
+              f"A moldura de live-view não foi encontrada: "
+              f"{caminho_liveview}"
+          )
+        with Image.open(caminho_liveview) as arquivo:
+          self.moldura_liveview_pil = self.normalizar_moldura(arquivo)
+    else:
+      self.moldura_liveview_pil = self.moldura_atual_pil
     self.erro_moldura = None
     print(f"Moldura ativa: {caminho}")
 
@@ -377,7 +398,7 @@ class TotemApp:
       return
 
     tamanho = (largura, altura)
-    if self.moldura_atual_pil is None:
+    if self.moldura_liveview_pil is None:
       self._moldura_tk_cache = None
       self._moldura_tamanho_cache = None
       self.canvas.itemconfigure(self.item_moldura, image="", state="hidden")
@@ -387,7 +408,7 @@ class TotemApp:
         self._moldura_tk_cache is None
         or self._moldura_tamanho_cache != tamanho
     ):
-      moldura_redimensionada = self.moldura_atual_pil.resize(
+      moldura_redimensionada = self.moldura_liveview_pil.resize(
           tamanho, Image.Resampling.LANCZOS
       )
       self._moldura_tk_cache = ImageTk.PhotoImage(moldura_redimensionada)
@@ -863,7 +884,6 @@ class TotemApp:
     self.liveview_photo = ImageTk.PhotoImage(imagem)
     self.canvas.itemconfigure(self.item_liveview, image=self.liveview_photo)
     self.canvas.coords(self.item_liveview, 0, 0)
-    self.canvas.itemconfigure(self.item_moldura, state="normal")
     if self.item_preview is not None:
       self.canvas.itemconfigure(self.item_preview, image="")
 
@@ -1061,25 +1081,26 @@ class TotemApp:
     largura_final, altura_final = moldura_atual_pil.size
     escala_x = largura_final / 600
     escala_y = altura_final / 1800
+    janelas = (
+        (30, 40, 570, 520),
+        (30, 545, 570, 1025),
+        (30, 1050, 570, 1530),
+    )
     moldura_rgba = moldura_atual_pil.resize(
         (largura_final, altura_final), Image.Resampling.LANCZOS
     )
     tira = Image.new(
         "RGBA", (largura_final, altura_final), (255, 255, 255, 255)
     )
-    for foto_bruta, posicao_y in zip(fotos, (40, 545, 1050)):
-      tamanho_foto = (
-          max(1, round(540 * escala_x)),
-          max(1, round(480 * escala_y)),
-      )
-      posicao = (
-          round(30 * escala_x),
-          round(posicao_y * escala_y),
-      )
+    for foto_bruta, (x1, y1, x2, y2) in zip(fotos, janelas):
+      esquerda = round(x1 * escala_x)
+      topo = round(y1 * escala_y)
+      direita = round(x2 * escala_x)
+      base = round(y2 * escala_y)
       foto = self.preencher_frame_com_corte(
-          foto_bruta, tamanho_foto
+          foto_bruta, (direita - esquerda, base - topo)
       ).convert("RGBA")
-      tira.paste(foto, posicao)
+      tira.paste(foto, (esquerda, topo))
 
     foto_final = Image.alpha_composite(tira, moldura_rgba).convert("RGB")
 

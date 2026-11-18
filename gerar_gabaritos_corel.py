@@ -77,43 +77,53 @@ def ler_geometria_tira():
     return int(resultado.group(1))
 
   base_largura = extrair_um(
-      r"escala_x\s*=\s*largura\s*/\s*(\d+)", "a largura-base"
+      r"escala_x\s*=\s*largura_final\s*/\s*(\d+)", "a largura-base"
   )
   base_altura = extrair_um(
-      r"escala_y\s*=\s*altura\s*/\s*(\d+)", "a altura-base"
+      r"escala_y\s*=\s*altura_final\s*/\s*(\d+)", "a altura-base"
   )
   tamanho_base = re.search(
-      r"largura,\s*altura\s*=\s*(\d+)\s*,\s*(\d+)", fonte_metodo
+      r"largura_final,\s*altura_final\s*=\s*moldura_atual_pil\.size",
+      fonte_metodo,
   )
-  if tamanho_base is None or tuple(map(int, tamanho_base.groups())) != (
-      base_largura,
-      base_altura,
+  if tamanho_base is None:
+    raise ValueError("Não foi possível identificar as dimensões da moldura.")
+
+  atribuicao_janelas = next(
+      (
+          no
+          for no in ast.walk(metodo)
+          if isinstance(no, ast.Assign)
+          and any(
+              isinstance(alvo, ast.Name) and alvo.id == "janelas"
+              for alvo in no.targets
+          )
+      ),
+      None,
+  )
+  if atribuicao_janelas is None:
+    raise ValueError("Não foi possível identificar as janelas da tira.")
+  janelas = ast.literal_eval(atribuicao_janelas.value)
+  if (
+      len(janelas) != 3
+      or any(
+          len(janela) != 4
+          or any(type(coordenada) is not int for coordenada in janela)
+          or janela[0] < 0
+          or janela[1] < 0
+          or janela[2] <= janela[0]
+          or janela[3] <= janela[1]
+          or janela[2] > base_largura
+          or janela[3] > base_altura
+          for janela in janelas
+      )
   ):
-    raise ValueError("As dimensões-base da Tira 3x em app.py não coincidem.")
-
-  posicoes = re.search(r"zip\(fotos,\s*\(([^)]*)\)\)", fonte_metodo)
-  if posicoes is None:
-    raise ValueError("Não foi possível identificar as posições das fotos.")
-  posicoes_y = ast.literal_eval("(" + posicoes.group(1) + ",)")
-  if len(posicoes_y) != 3 or not all(type(valor) is int for valor in posicoes_y):
-    raise ValueError("app.py deve definir exatamente 3 posições inteiras.")
-
-  larguras = re.findall(
-      r"round\(\s*(\d+)\s*\*\s*escala_x\s*\)", fonte_metodo
-  )
-  alturas = re.findall(
-      r"round\(\s*(\d+)\s*\*\s*escala_y\s*\)", fonte_metodo
-  )
-  if len(larguras) < 2 or not alturas:
-    raise ValueError("Não foi possível identificar tamanho e margem das fotos.")
+    raise ValueError("app.py deve definir exatamente 3 janelas válidas.")
 
   return {
       "base_largura": base_largura,
       "base_altura": base_altura,
-      "foto_largura": int(larguras[0]),
-      "margem_x": int(larguras[1]),
-      "foto_altura": int(alturas[0]),
-      "posicoes_y": posicoes_y,
+      "janelas": janelas,
   }
 
 
@@ -262,17 +272,14 @@ def gerar_gabarito_tira(caminho, dimensoes, geometria):
   base_altura = geometria["base_altura"]
   escala_x = largura / base_largura
   escala_y = altura / base_altura
-  foto_largura = max(1, round(geometria["foto_largura"] * escala_x))
-  foto_altura = max(1, round(geometria["foto_altura"] * escala_y))
-  posicao_x = round(geometria["margem_x"] * escala_x)
   janelas = [
       (
-          posicao_x,
-          round(posicao_y * escala_y),
-          foto_largura,
-          foto_altura,
+          round(x1 * escala_x),
+          round(y1 * escala_y),
+          round(x2 * escala_x) - round(x1 * escala_x),
+          round(y2 * escala_y) - round(y1 * escala_y),
       )
-      for posicao_y in geometria["posicoes_y"]
+      for x1, y1, x2, y2 in geometria["janelas"]
   ]
 
   imagem = Image.new("RGBA", dimensoes, VERDE_AREA)
