@@ -29,6 +29,7 @@ API_KEY = os.environ.get(
 PASTA_PRONTA = os.path.join(PASTA_BASE, "fotos_prontas")
 PASTA_MOLDURAS = os.path.join(PASTA_BASE, "molduras")
 CAMINHO_CONFIG = os.path.join(PASTA_BASE, "config.json")
+MOLDURA_PADRAO = "Gustavo_2.png"
 CAMINHO_MOLDURA = os.path.join(PASTA_BASE, "molduras", "moldura.png")
 CAMINHO_MOLDURA_TIRA = os.path.join(
     PASTA_BASE, "molduras", "moldura_tira.png"
@@ -51,12 +52,26 @@ def listar_molduras_disponiveis():
 
 
 def carregar_config():
-  molduras = listar_molduras_disponiveis()
+  try:
+    molduras = listar_molduras_disponiveis()
+  except OSError as erro:
+    print(f"Aviso: não foi possível listar molduras ({erro}); usando padrões.")
+    molduras = []
+  if (
+      MOLDURA_PADRAO not in molduras
+      and os.path.isfile(os.path.join(PASTA_MOLDURAS, MOLDURA_PADRAO))
+  ):
+    molduras.append(MOLDURA_PADRAO)
+  molduras.sort(key=str.casefold)
   molduras_por_chave = {
       os.path.normcase(os.path.normpath(caminho)): caminho
       for caminho in molduras
   }
-  primeira_moldura = molduras[0] if molduras else None
+  primeira_moldura = (
+      MOLDURA_PADRAO
+      if MOLDURA_PADRAO in molduras
+      else molduras[0] if molduras else None
+  )
 
   def moldura_padrao(caminho_legado):
     relativa = os.path.relpath(caminho_legado, PASTA_MOLDURAS)
@@ -137,11 +152,19 @@ def carregar_config():
 
   if (
       not config_existente
+      or config_lida.get("moldura_1foto") != config["moldura_1foto"]
+      or config_lida.get("moldura_tira3") != config["moldura_tira3"]
       or config_lida.get("moldura") != config["moldura"]
       or config_lida.get("indice_camera") != config["indice_camera"]
       or config_lida.get("tempo_resultado") != config["tempo_resultado"]
   ):
-    salvar_config(config)
+    try:
+      salvar_config(config)
+    except OSError as erro:
+      print(
+          "Aviso: não foi possível salvar config.json "
+          f"({erro}); usando a configuração padrão em memória."
+      )
   return config
 
 

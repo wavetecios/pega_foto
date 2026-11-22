@@ -10,6 +10,7 @@ from PIL import Image, ImageDraw, ImageFont
 RAIZ = Path(__file__).resolve().parent
 PASTA_MOLDURAS = RAIZ / "molduras"
 PASTA_SAIDA = RAIZ / "gabaritos_corel"
+MOLDURA_PADRAO = "Gustavo_2.png"
 DPI = 300
 
 VERMELHO = (235, 45, 55, 255)
@@ -22,31 +23,89 @@ COR_TEXTO = (20, 40, 55, 255)
 
 def ler_configuracao():
   caminho = RAIZ / "config.json"
-  with caminho.open("r", encoding="utf-8") as arquivo:
-    config = json.load(arquivo)
+  try:
+    with caminho.open("r", encoding="utf-8") as arquivo:
+      config = json.load(arquivo)
+  except (OSError, UnicodeDecodeError, json.JSONDecodeError) as erro:
+    raise ValueError(
+        f"Não foi possível carregar a configuração {caminho}: {erro}"
+    ) from erro
   if not isinstance(config, dict):
-    raise ValueError("config.json precisa conter um objeto JSON.")
+    raise ValueError(f"A configuração {caminho} precisa conter um objeto JSON.")
   return config
 
 
-def carregar_moldura(config, chave):
-  nome = config.get(chave)
-  if not isinstance(nome, str) or not nome.strip():
-    raise ValueError(f"config.json não contém uma moldura válida em {chave}.")
-
-  relativa = Path(nome.strip())
-  if relativa.parts and relativa.parts[0].lower() == "molduras":
-    relativa = Path(*relativa.parts[1:])
-  caminho = (PASTA_MOLDURAS / relativa).resolve()
+def listar_molduras_disponiveis():
   try:
-    caminho.relative_to(PASTA_MOLDURAS.resolve())
-  except ValueError as erro:
-    raise ValueError(f"Caminho de moldura inválido em {chave}: {nome}") from erro
-  if caminho.suffix.lower() != ".png" or not caminho.is_file():
-    raise FileNotFoundError(f"Moldura PNG não encontrada: {caminho}")
+    return sorted(
+        caminho.name
+        for caminho in PASTA_MOLDURAS.iterdir()
+        if caminho.is_file() and caminho.suffix.lower() == ".png"
+    )
+  except OSError as erro:
+    raise OSError(
+        f"Não foi possível listar molduras em {PASTA_MOLDURAS}: {erro}"
+    ) from erro
 
-  with Image.open(caminho) as arquivo:
-    return caminho, arquivo.size
+
+def carregar_moldura(config, chave):
+  molduras = listar_molduras_disponiveis()
+  molduras_texto = ", ".join(molduras) if molduras else "(nenhuma)"
+  nome = config.get(chave)
+  caminho_configurado = None
+  if isinstance(nome, str) and nome.strip():
+    relativa = Path(nome.strip())
+    if relativa.parts and relativa.parts[0].lower() == "molduras":
+      relativa = Path(*relativa.parts[1:])
+    caminho_configurado = (PASTA_MOLDURAS / relativa).resolve()
+    try:
+      caminho_configurado.relative_to(PASTA_MOLDURAS.resolve())
+    except ValueError as erro:
+      raise ValueError(
+          f"Caminho de moldura inválido em {chave}: {nome}"
+      ) from erro
+
+  candidatos = []
+  if (
+      caminho_configurado is not None
+      and caminho_configurado.suffix.lower() == ".png"
+      and caminho_configurado.is_file()
+  ):
+    candidatos.append(caminho_configurado)
+
+  caminho_padrao = PASTA_MOLDURAS / MOLDURA_PADRAO
+  if caminho_padrao.is_file() and caminho_padrao not in candidatos:
+    candidatos.append(caminho_padrao)
+
+  if not candidatos:
+    raise FileNotFoundError(
+        f"Moldura configurada para {chave} não foi encontrada"
+        f" ({nome!r}). Molduras PNG disponíveis em {PASTA_MOLDURAS}: "
+        f"{molduras_texto}"
+    )
+
+  erros = []
+  for caminho in candidatos:
+    try:
+      with Image.open(caminho) as arquivo:
+        dimensoes = arquivo.size
+    except (OSError, ValueError, Image.DecompressionBombError) as erro:
+      erros.append(f"{caminho.name}: {erro}")
+      continue
+
+    if caminho != caminho_configurado:
+      print(
+          f"Aviso: moldura {nome!r} de {chave} indisponível; "
+          f"usando {MOLDURA_PADRAO}."
+      )
+    return caminho, dimensoes
+
+  detalhes = "; ".join(erros)
+  raise OSError(
+      f"Não foi possível carregar a moldura para {chave}. "
+      f"Molduras PNG disponíveis em {PASTA_MOLDURAS}: {molduras_texto}. "
+      f"Detalhes: {detalhes}"
+  )
 
 
 def ler_geometria_tira():
@@ -394,20 +453,23 @@ def imprimir_resumo(dimensoes_foto, dimensoes_tira, janelas):
 
 
 def main():
-  config = ler_configuracao()
-  _, dimensoes_foto = carregar_moldura(config, "moldura_1foto")
-  _, dimensoes_tira = carregar_moldura(config, "moldura_tira3")
-  geometria = ler_geometria_tira()
-  PASTA_SAIDA.mkdir(parents=True, exist_ok=True)
+  try:
+    config = ler_configuracao()
+    _, dimensoes_foto = carregar_moldura(config, "moldura_1foto")
+    _, dimensoes_tira = carregar_moldura(config, "moldura_tira3")
+    geometria = ler_geometria_tira()
+    PASTA_SAIDA.mkdir(parents=True, exist_ok=True)
 
-  caminho_foto = PASTA_SAIDA / "gabarito_1_foto.png"
-  caminho_tira = PASTA_SAIDA / "gabarito_tira_3x.png"
+    caminho_foto = PASTA_SAIDA / "gabarito_1_foto.png"
+    caminho_tira = PASTA_SAIDA / "gabarito_tira_3x.png"
 
-  gerar_gabarito_foto(caminho_foto, dimensoes_foto)
-  janelas = gerar_gabarito_tira(
-      caminho_tira, dimensoes_tira, geometria
-  )
-  imprimir_resumo(dimensoes_foto, dimensoes_tira, janelas)
+    gerar_gabarito_foto(caminho_foto, dimensoes_foto)
+    janelas = gerar_gabarito_tira(
+        caminho_tira, dimensoes_tira, geometria
+    )
+    imprimir_resumo(dimensoes_foto, dimensoes_tira, janelas)
+  except (OSError, ValueError, SyntaxError) as erro:
+    raise SystemExit(f"Erro ao gerar gabaritos: {erro}") from erro
 
 
 if __name__ == "__main__":
