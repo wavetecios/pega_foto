@@ -1,0 +1,12 @@
+{
+  "moldura_1foto": "Gustavo_2.png",
+  "moldura_tira3": "Gustavo_2.png",
+  "modo_atual": "1_foto",
+  "tempo_contagem": 3,
+  "tempo_resultado": 5,
+  "indice_camera": 0,
+  "url_galeria": "https://example.invalid/api/upload/",
+  "api_key_galeria": "",
+  "caminho_envio_galeria": "",
+  "moldura": "Gustavo_2.png"
+}

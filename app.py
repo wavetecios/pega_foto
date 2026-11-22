@@ -1,3 +1,4 @@
+import importlib.util
 import cv2
 import json
 import os
@@ -11,29 +12,23 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from PIL import Image, ImageOps, ImageTk
 
-CAMINHO_MODULO_GALERIA = r"C:\pega_fotos"
-if CAMINHO_MODULO_GALERIA not in sys.path:
-  sys.path.insert(0, CAMINHO_MODULO_GALERIA)
-
-from envio_galeria import enviar_foto_em_segundo_plano
-
 Image.MAX_IMAGE_PIXELS = None
 
 # --- CONFIGURAÇÕES ---
 PASTA_BASE = r"C:\Totem_Fotografico"
-UPLOAD_URL = "http://127.0.0.1:8000/api/upload/"
 CODIGO_EVENTO = "gustavo_6_anos"
-API_KEY = os.environ.get(
-    "TOTEM_API_KEY", "dev-totem-api-key-change-me"
-)
 PASTA_PRONTA = os.path.join(PASTA_BASE, "fotos_prontas")
 PASTA_MOLDURAS = os.path.join(PASTA_BASE, "molduras")
 CAMINHO_CONFIG = os.path.join(PASTA_BASE, "config.json")
 MOLDURA_PADRAO = "Gustavo_2.png"
+CAMINHO_MODULO_GALERIA_PADRAO = r"C:\pega_fotos\envio_galeria.py"
 CAMINHO_MOLDURA = os.path.join(PASTA_BASE, "molduras", "moldura.png")
 CAMINHO_MOLDURA_TIRA = os.path.join(
     PASTA_BASE, "molduras", "moldura_tira.png"
 )
+_ENVIO_GALERIA_TENTADO = False
+_ENVIAR_FOTO_EXTERNO = None
+
 # Garante que as pastas existem
 os.makedirs(PASTA_PRONTA, exist_ok=True)
 os.makedirs(PASTA_MOLDURAS, exist_ok=True)
@@ -121,6 +116,21 @@ def carregar_config():
       "tempo_contagem": config_lida.get("tempo_contagem", 3),
       "tempo_resultado": config_lida.get("tempo_resultado", 5),
       "indice_camera": config_lida.get("indice_camera", 0),
+      "url_galeria": (
+          config_lida.get("url_galeria")
+          if isinstance(config_lida.get("url_galeria"), str)
+          else ""
+      ),
+      "api_key_galeria": (
+          config_lida.get("api_key_galeria")
+          if isinstance(config_lida.get("api_key_galeria"), str)
+          else ""
+      ),
+      "caminho_envio_galeria": (
+          config_lida.get("caminho_envio_galeria")
+          if isinstance(config_lida.get("caminho_envio_galeria"), str)
+          else ""
+      ),
   }
   if config["modo_atual"] not in ("1_foto", "tira_3"):
     config["modo_atual"] = "1_foto"
@@ -171,6 +181,135 @@ def carregar_config():
 def salvar_config(cfg):
   with open(CAMINHO_CONFIG, "w", encoding="utf-8") as arquivo:
     json.dump(cfg, arquivo, ensure_ascii=False, indent=2)
+
+
+def _carregar_envio_galeria(config):
+  global _ENVIO_GALERIA_TENTADO, _ENVIAR_FOTO_EXTERNO
+  if _ENVIO_GALERIA_TENTADO:
+    return _ENVIAR_FOTO_EXTERNO
+  _ENVIO_GALERIA_TENTADO = True
+
+  caminhos = (
+      os.environ.get("ENVIO_GALERIA_PATH"),
+      config.get("caminho_envio_galeria"),
+      CAMINHO_MODULO_GALERIA_PADRAO,
+  )
+  for caminho in caminhos:
+    if not isinstance(caminho, str) or not caminho.strip():
+      continue
+    caminho = os.path.expandvars(os.path.expanduser(caminho.strip()))
+    if os.path.isdir(caminho):
+      caminho = os.path.join(caminho, "envio_galeria.py")
+    if not os.path.isfile(caminho):
+      continue
+    try:
+      nome_modulo = "_totem_envio_galeria"
+      spec = importlib.util.spec_from_file_location(nome_modulo, caminho)
+      if spec is None or spec.loader is None:
+        raise ImportError(f"Não foi possível carregar o módulo em {caminho}")
+      modulo = importlib.util.module_from_spec(spec)
+      sys.modules[nome_modulo] = modulo
+      spec.loader.exec_module(modulo)
+      enviador = getattr(modulo, "enviar_foto_em_segundo_plano", None)
+      if not callable(enviador):
+        raise AttributeError(
+            f"O módulo {caminho} não define enviar_foto_em_segundo_plano"
+        )
+      _ENVIAR_FOTO_EXTERNO = enviador
+      return _ENVIAR_FOTO_EXTERNO
+    except Exception as erro:
+      sys.modules.pop("_totem_envio_galeria", None)
+      print(f"Aviso: falha ao importar auxiliar de galeria {caminho}: {erro}")
+
+  print("Aviso: auxiliar de galeria indisponível; será usado requests.")
+  return None
+
+
+def _enviar_com_requests(caminho_arquivo, codigo_evento, url, api_key):
+  try:
+    import requests
+  except ImportError as erro:
+    print(f"Erro: requests indisponível; foto mantida localmente: {erro}")
+    return
+
+  try:
+    with open(caminho_arquivo, "rb") as imagem:
+      resposta = requests.post(
+          url,
+          headers={"X-API-KEY": api_key},
+          files={"imagem": imagem},
+          data={"codigo_evento": codigo_evento},
+          timeout=20,
+      )
+    if resposta.status_code not in (200, 201):
+      print(
+          f"Falha ao enviar foto para a galeria: HTTP "
+          f"{resposta.status_code} ({caminho_arquivo})"
+      )
+    else:
+      print(f"Foto enviada para a galeria: {caminho_arquivo}")
+  except (OSError, requests.RequestException) as erro:
+    print(
+        f"Erro de rede/arquivo ao enviar foto para a galeria "
+        f"({caminho_arquivo}): {erro}"
+    )
+
+
+def enviar_foto_galeria_em_segundo_plano(caminho_arquivo, config):
+  def valor_configurado(*valores):
+    return next(
+        (
+            valor.strip()
+            for valor in valores
+            if isinstance(valor, str) and valor.strip()
+        ),
+        "",
+    )
+
+  url = valor_configurado(
+      os.environ.get("GALERIA_UPLOAD_URL"),
+      os.environ.get("UPLOAD_URL"),
+      config.get("url_galeria"),
+  )
+  api_key = valor_configurado(
+      os.environ.get("TOTEM_API_KEY"),
+      os.environ.get("GALERIA_API_KEY"),
+      config.get("api_key_galeria"),
+  )
+  if not url or not api_key:
+    print(
+        "Aviso: envio à galeria ignorado; configure a URL e a chave. "
+        f"A foto permanece em {caminho_arquivo}."
+    )
+    return None
+
+  def enviar():
+    enviador = _carregar_envio_galeria(config)
+    if enviador is not None:
+      try:
+        enviador(
+            caminho_arquivo,
+            codigo_evento=CODIGO_EVENTO,
+            upload_url=url,
+            api_key=api_key,
+        )
+        return
+      except Exception as erro:
+        print(
+            f"Aviso: auxiliar de galeria falhou; usando requests: {erro}"
+        )
+    _enviar_com_requests(caminho_arquivo, CODIGO_EVENTO, url, api_key)
+
+  thread = threading.Thread(target=enviar, daemon=True)
+  try:
+    thread.start()
+  except RuntimeError as erro:
+    print(
+        "Erro ao iniciar envio em segundo plano; "
+        f"foto mantida localmente: {erro}"
+    )
+    return None
+  return thread
 
 
 class TotemApp:
@@ -768,6 +907,11 @@ class TotemApp:
           "tempo_contagem": tempo,
           "tempo_resultado": self.tempo_resultado,
           "indice_camera": self.var_camera_menu.get(),
+          "url_galeria": self.config.get("url_galeria", ""),
+          "api_key_galeria": self.config.get("api_key_galeria", ""),
+          "caminho_envio_galeria": self.config.get(
+              "caminho_envio_galeria", ""
+          ),
       }
       indice_camera_antiga = self.indice_camera
       if not self.abrir_camera(config_nova["indice_camera"]):
@@ -1104,12 +1248,7 @@ class TotemApp:
         PASTA_PRONTA, f"foto_{int(time.time())}.jpg"
     )
     foto_final.save(caminho_saida, "JPEG", quality=95)
-    enviar_foto_em_segundo_plano(
-        caminho_saida,
-        codigo_evento=CODIGO_EVENTO,
-        upload_url=UPLOAD_URL,
-        api_key=API_KEY,
-    )
+    enviar_foto_galeria_em_segundo_plano(caminho_saida, self.config)
     return caminho_saida
 
   def montar_tira_3_fotos(self, fotos, moldura_atual_pil):
@@ -1149,12 +1288,7 @@ class TotemApp:
         PASTA_PRONTA, f"tira_{int(time.time())}.jpg"
     )
     foto_final.save(caminho_saida, "JPEG", quality=95)
-    enviar_foto_em_segundo_plano(
-        caminho_saida,
-        codigo_evento=CODIGO_EVENTO,
-        upload_url=UPLOAD_URL,
-        api_key=API_KEY,
-    )
+    enviar_foto_galeria_em_segundo_plano(caminho_saida, self.config)
     return caminho_saida
 
   def exibir_foto_pronta(self, foto):
