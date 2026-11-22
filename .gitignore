@@ -11,3 +11,10 @@ staticfiles/
 .vscode/
 .idea/
 *.log
+fotos_prontas/
+config.json
+.DS_Store
+Thumbs.db
+gabaritos_corel/
+molduras/*
+!molduras/Gustavo_2.png
