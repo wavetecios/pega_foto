@@ -3,6 +3,7 @@ import json
 import os
 import queue
 import shutil
+import sys
 import threading
 import time
 import traceback
@@ -10,10 +11,21 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from PIL import Image, ImageOps, ImageTk
 
+CAMINHO_MODULO_GALERIA = r"C:\pega_fotos"
+if CAMINHO_MODULO_GALERIA not in sys.path:
+  sys.path.insert(0, CAMINHO_MODULO_GALERIA)
+
+from envio_galeria import enviar_foto_em_segundo_plano
+
 Image.MAX_IMAGE_PIXELS = None
 
 # --- CONFIGURAÇÕES ---
 PASTA_BASE = r"C:\Totem_Fotografico"
+UPLOAD_URL = "http://127.0.0.1:8000/api/upload/"
+CODIGO_EVENTO = "gustavo_6_anos"
+API_KEY = os.environ.get(
+    "TOTEM_API_KEY", "dev-totem-api-key-change-me"
+)
 PASTA_PRONTA = os.path.join(PASTA_BASE, "fotos_prontas")
 PASTA_MOLDURAS = os.path.join(PASTA_BASE, "molduras")
 CAMINHO_CONFIG = os.path.join(PASTA_BASE, "config.json")
@@ -1069,6 +1081,12 @@ class TotemApp:
         PASTA_PRONTA, f"foto_{int(time.time())}.jpg"
     )
     foto_final.save(caminho_saida, "JPEG", quality=95)
+    enviar_foto_em_segundo_plano(
+        caminho_saida,
+        codigo_evento=CODIGO_EVENTO,
+        upload_url=UPLOAD_URL,
+        api_key=API_KEY,
+    )
     return caminho_saida
 
   def montar_tira_3_fotos(self, fotos, moldura_atual_pil):
@@ -1108,6 +1126,12 @@ class TotemApp:
         PASTA_PRONTA, f"tira_{int(time.time())}.jpg"
     )
     foto_final.save(caminho_saida, "JPEG", quality=95)
+    enviar_foto_em_segundo_plano(
+        caminho_saida,
+        codigo_evento=CODIGO_EVENTO,
+        upload_url=UPLOAD_URL,
+        api_key=API_KEY,
+    )
     return caminho_saida
 
   def exibir_foto_pronta(self, foto):
