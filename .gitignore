@@ -8,3 +8,6 @@ venv/
 .env
 .DS_Store
 Thumbs.db
+gabaritos_corel/
+molduras/*
+!molduras/Gustavo_2.png
