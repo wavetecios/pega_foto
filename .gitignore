@@ -2,3 +2,9 @@ fotos_prontas/
 __pycache__/
 *.pyc
 config.json
+venv/
+.venv/
+*.py[cod]
+.env
+.DS_Store
+Thumbs.db
